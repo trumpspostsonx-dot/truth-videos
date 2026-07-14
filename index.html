@@ -4,118 +4,38 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="referrer" content="no-referrer">
-    <title>Truth Video Player</title>
-
+    <title>Video</title>
     <style>
-        :root {
-            color-scheme: dark;
-        }
-
-        * {
-            box-sizing: border-box;
-        }
-
-        html,
-        body {
+        html, body {
             width: 100%;
-            min-height: 100%;
+            height: 100%;
             margin: 0;
             background: #000;
-            color: #fff;
-            font-family: system-ui, sans-serif;
-        }
-
-        body {
-            display: grid;
-            place-items: center;
-            padding: 16px;
-        }
-
-        main {
-            width: min(100%, 1200px);
-            text-align: center;
+            overflow: hidden;
         }
 
         video {
             display: block;
             width: 100%;
-            max-height: 90vh;
-            margin: 0 auto;
+            height: 100%;
+            object-fit: contain;
             background: #000;
-        }
-
-        #status {
-            margin: 16px 0;
-            line-height: 1.5;
-        }
-
-        .links {
-            display: flex;
-            justify-content: center;
-            gap: 16px;
-            flex-wrap: wrap;
-        }
-
-        .links a {
-            display: none;
-            color: #8ab4f8;
-            overflow-wrap: anywhere;
         }
     </style>
 </head>
-
 <body>
-<main>
-    <!--
-        Do not force a MIME type here.
-
-        Truth Social's own player assigns the media URL directly to the video
-        element and lets the browser and CDN negotiate the response.
-    -->
-    <video id="player" controls playsinline preload="metadata">
-        Your browser does not support HTML video.
-    </video>
-
-    <p id="status">Loading video…</p>
-
-    <p class="links">
-        <a
-            id="openOriginal"
-            target="_blank"
-            rel="noopener noreferrer"
-        >
-            Open the original media file
-        </a>
-
-        <a
-            id="openTruth"
-            target="_blank"
-            rel="noopener noreferrer"
-        >
-            Play on Truth Social
-        </a>
-    </p>
-</main>
+<video id="player" controls autoplay playsinline preload="auto"></video>
 
 <script>
 "use strict";
 
 const player = document.getElementById("player");
-const statusElement = document.getElementById("status");
-const openOriginal = document.getElementById("openOriginal");
-const openTruth = document.getElementById("openTruth");
 
-function decodeUrlParameter(value) {
+function decodeVideoUrl(value) {
     if (!value) {
-        return "";
+        throw new Error("Missing video URL.");
     }
 
-    /*
-     * Accept:
-     * - URL-safe Base64
-     * - standard Base64
-     * - older query strings where "+" became a space
-     */
     let normalized = value
         .replace(/-/g, "+")
         .replace(/_/g, "/")
@@ -124,28 +44,16 @@ function decodeUrlParameter(value) {
     normalized += "=".repeat((4 - normalized.length % 4) % 4);
 
     const binary = atob(normalized);
-
     const bytes = Uint8Array.from(
         binary,
         character => character.charCodeAt(0)
     );
 
-    return new TextDecoder("utf-8", {
-        fatal: true
-    }).decode(bytes);
-}
-
-function parseAllowedUrl(encodedValue, kind) {
-    const decoded = decodeUrlParameter(encodedValue);
-
-    if (!decoded) {
-        return null;
-    }
-
+    const decoded = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
     const parsed = new URL(decoded);
 
     if (parsed.protocol !== "https:") {
-        throw new Error(`${kind} URL must use HTTPS.`);
+        throw new Error("Unsupported video URL.");
     }
 
     const hostname = parsed.hostname.toLowerCase();
@@ -154,94 +62,39 @@ function parseAllowedUrl(encodedValue, kind) {
         hostname !== "truthsocial.com" &&
         !hostname.endsWith(".truthsocial.com")
     ) {
-        throw new Error(
-            kind === "media"
-                ? "The media URL is not hosted by Truth Social."
-                : "The fallback post URL is not hosted by Truth Social."
-        );
+        throw new Error("Unsupported video host.");
     }
 
     return parsed.href;
 }
 
-function describeMediaError(error) {
-    if (!error) {
-        return "Unknown media error.";
-    }
-
-    const descriptions = {
-        1: "Playback was aborted.",
-        2: "A network error interrupted the video.",
-        3: "Firefox could not decode the returned video stream.",
-        4: "Truth Social did not provide this media as a playable third-party source."
-    };
-
-    return descriptions[error.code] || `Media error ${error.code}.`;
-}
-
 try {
     const params = new URLSearchParams(window.location.search);
+    const mediaUrl = decodeVideoUrl(params.get("v"));
 
-    const mediaUrl = parseAllowedUrl(
-        params.get("v"),
-        "media"
-    );
+    const source = document.createElement("source");
+    source.src = mediaUrl;
+    source.type = "video/mp4";
+    player.appendChild(source);
 
-    const truthUrl = parseAllowedUrl(
-        params.get("p"),
-        "post"
-    );
+    let redirected = false;
 
-    if (truthUrl) {
-        openTruth.href = truthUrl;
-        openTruth.style.display = "inline";
-    }
-
-    if (!mediaUrl) {
-        if (truthUrl) {
-            statusElement.textContent =
-                "Opening the video on Truth Social…";
-
-            window.location.replace(truthUrl);
-        } else {
-            throw new Error(
-                "The viewer link contains no video URL."
-            );
+    const openDirectly = () => {
+        if (redirected) {
+            return;
         }
-    } else {
-        openOriginal.href = mediaUrl;
-        openOriginal.style.display = "inline";
 
-        /*
-         * Assign the URL directly.
-         *
-         * Do not add type="video/mp4", because the upstream response may
-         * use a different browser-playable declaration.
-         */
-        player.src = mediaUrl;
-        player.load();
+        redirected = true;
+        window.location.replace(mediaUrl);
+    };
 
-        player.addEventListener(
-            "loadedmetadata",
-            () => {
-                statusElement.textContent = "Video ready.";
-            },
-            { once: true }
-        );
+    source.addEventListener("error", openDirectly, { once: true });
+    player.addEventListener("error", openDirectly, { once: true });
 
-        player.addEventListener("error", () => {
-            const detail = describeMediaError(player.error);
-
-            statusElement.textContent = truthUrl
-                ? `${detail} Use “Play on Truth Social” below.`
-                : `${detail} Open the original media file below.`;
-        });
-    }
-} catch (error) {
-    statusElement.textContent =
-        error instanceof Error
-            ? error.message
-            : String(error);
+    player.load();
+    player.play().catch(() => {});
+} catch (_error) {
+    document.documentElement.innerHTML = "";
 }
 </script>
 </body>
