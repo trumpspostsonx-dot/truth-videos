@@ -5,8 +5,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="referrer" content="no-referrer">
     <title>Video</title>
+
     <style>
-        html, body {
+        html,
+        body {
             width: 100%;
             height: 100%;
             margin: 0;
@@ -23,6 +25,7 @@
         }
     </style>
 </head>
+
 <body>
 <video id="player" controls autoplay playsinline preload="auto"></video>
 
@@ -30,6 +33,7 @@
 "use strict";
 
 const player = document.getElementById("player");
+const FALLBACK_TIMEOUT_MS = 10000;
 
 function decodeVideoUrl(value) {
     if (!value) {
@@ -72,12 +76,15 @@ try {
     const params = new URLSearchParams(window.location.search);
     const mediaUrl = decodeVideoUrl(params.get("v"));
 
-    const source = document.createElement("source");
-    source.src = mediaUrl;
-    source.type = "video/mp4";
-    player.appendChild(source);
-
     let redirected = false;
+    let fallbackTimer = null;
+
+    const clearFallbackTimer = () => {
+        if (fallbackTimer !== null) {
+            clearTimeout(fallbackTimer);
+            fallbackTimer = null;
+        }
+    };
 
     const openDirectly = () => {
         if (redirected) {
@@ -85,14 +92,32 @@ try {
         }
 
         redirected = true;
+        clearFallbackTimer();
         window.location.replace(mediaUrl);
     };
+
+    const source = document.createElement("source");
+    source.src = mediaUrl;
+    source.type = "video/mp4";
 
     source.addEventListener("error", openDirectly, { once: true });
     player.addEventListener("error", openDirectly, { once: true });
 
+    // If the browser can decode and buffer the stream, keep the embedded player.
+    player.addEventListener("canplay", clearFallbackTimer, { once: true });
+    player.addEventListener("playing", clearFallbackTimer, { once: true });
+
+    player.appendChild(source);
+
+    // Some browsers hang on an unsuitable source without firing an error.
+    // Redirect seamlessly to the direct media URL after 10 seconds.
+    fallbackTimer = setTimeout(openDirectly, FALLBACK_TIMEOUT_MS);
+
     player.load();
-    player.play().catch(() => {});
+    player.play().catch(() => {
+        // Autoplay may be blocked; controls remain available.
+        // The canplay event still prevents an unnecessary redirect.
+    });
 } catch (_error) {
     document.documentElement.innerHTML = "";
 }
